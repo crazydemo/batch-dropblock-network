@@ -88,7 +88,7 @@ class cls_tripletTrainer:
         self.target = pids.cuda()
 
     def _forward(self):
-        score, feat = self.model(self.data)
+        score, feat = self.model(self.data, self.target)
         self.loss = self.criterion(score, feat, self.target)
 
     def _backward(self):

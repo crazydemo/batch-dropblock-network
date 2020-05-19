@@ -15,7 +15,7 @@ from config import opt
 from datasets import data_manager
 from datasets.data_loader import ImageData
 from datasets.samplers import RandomIdentitySampler
-from models.networks import ResNetBuilder, IDE, Resnet, BFE
+from models.bfe_part_channel_drop import ResNetBuilder, IDE, Resnet, BFE #bfe, bfe_channel_drop, two_cutmix
 from trainers.evaluator import ResNetEvaluator
 from trainers.trainer import cls_tripletTrainer
 from utils.loss import CrossEntropyLabelSmooth, TripletLoss, Margin
@@ -143,15 +143,31 @@ def train(**kwargs):
     # get trainer and evaluator
     reid_trainer = cls_tripletTrainer(opt, model, optimizer, criterion, summary_writer)
 
+    '''
+        def adjust_lr(optimizer, ep):
+            if ep < 50:
+                lr = 1e-4*(ep//5+1)
+            elif ep < 200:
+                lr = 1e-3
+            elif ep < 300:
+                lr = 1e-4
+            else:
+                lr = 1e-5
+            for p in optimizer.param_groups:
+                p['lr'] = lr
+        '''
+
     def adjust_lr(optimizer, ep):
         if ep < 50:
-            lr = 1e-4*(ep//5+1)
+            lr = 1e-4 * (ep // 5 + 1)
         elif ep < 200:
             lr = 1e-3
         elif ep < 300:
             lr = 1e-4
-        else:
+        elif ep < 500:
             lr = 1e-5
+        else:
+            lr = 1e-5 / 2  # 5e-6
         for p in optimizer.param_groups:
             p['lr'] = lr
 
@@ -160,6 +176,7 @@ def train(**kwargs):
     best_epoch = 0
     for epoch in range(start_epoch, opt.max_epoch):
         if opt.adjust_lr:
+            #print('adjusting learning rate...')
             adjust_lr(optimizer, epoch + 1)
         reid_trainer.train(epoch, trainloader)
 
