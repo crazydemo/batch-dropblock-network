@@ -153,6 +153,39 @@ class CrossEntropyLabelSmooth(nn.Module):
         loss = (- targets * log_probs).mean(0).sum()
         return loss
 
+class LikelihoodLoss(nn.Module):
+    """Cross entropy loss with label smoothing regularizer.
+    Reference:
+    Szegedy et al. Rethinking the Inception Architecture for Computer Vision. CVPR 2016.
+    Equation: y = (1 - epsilon) * y + epsilon / K.
+    Args:
+        num_classes (int): number of classes.
+        epsilon (float): weight.
+    """
+
+    def __init__(self, num_classes, a=0.0001, lamda=0.001, use_gpu=True):
+        super(LikelihoodLoss, self).__init__()
+        self.num_classes = num_classes
+        self.a = a
+        self.use_gpu = use_gpu
+        self.lamda = lamda
+        self.logsoftmax = nn.LogSoftmax(dim=1)
+
+    def forward(self, score, label):
+        """
+        Args:
+            inputs: prediction matrix (before softmax) with shape (batch_size, num_classes)
+            targets: ground truth labels with shape (num_classes)
+        """
+        ALPHA = torch.zeros(score.size()).scatter_(1, label.unsqueeze(1).data.cpu(), 1)
+        max_num = torch.max(ALPHA)
+        K = ALPHA * self.a + 1
+        logits_with_margin = score * K.cuda()
+        likelihood = self.lamda * torch.mean(torch.sum(-1. * logits_with_margin * ALPHA.cuda(), 1))
+
+        return likelihood, logits_with_margin
+
+
 class Margin:
     def __call__(self, embeddings, labels):
         embeddings = F.normalize(embeddings)

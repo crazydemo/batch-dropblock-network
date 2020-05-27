@@ -17,6 +17,7 @@ from torchvision.transforms import functional
 
 from .resnet import ResNet
 
+
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
     if classname.find('Linear') != -1:
@@ -39,15 +40,16 @@ def weights_init_classifier(m):
         if m.bias:
             nn.init.constant_(m.bias, 0.0)
 
+
 class SELayer(nn.Module):
     def __init__(self, channel, reduction=16):
         super(SELayer, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
-                nn.Linear(channel, channel // reduction),
-                nn.ReLU(inplace=True),
-                nn.Linear(channel // reduction, channel),
-                nn.Sigmoid()
+            nn.Linear(channel, channel // reduction),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
@@ -56,23 +58,25 @@ class SELayer(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return x * y
 
+
 class BatchDrop(nn.Module):
     def __init__(self, h_ratio, w_ratio):
         super(BatchDrop, self).__init__()
         self.h_ratio = h_ratio
         self.w_ratio = w_ratio
-    
+
     def forward(self, x):
         if self.training:
             h, w = x.size()[-2:]
             rh = round(self.h_ratio * h)
             rw = round(self.w_ratio * w)
-            sx = random.randint(0, h-rh)
-            sy = random.randint(0, w-rw)
+            sx = random.randint(0, h - rh)
+            sy = random.randint(0, w - rw)
             mask = x.new_ones(x.size())
-            mask[:, :, sx:sx+rh, sy:sy+rw] = 0
+            mask[:, :, sx:sx + rh, sy:sy + rw] = 0
             x = x * mask
         return x
+
 
 class BatchCrop(nn.Module):
     def __init__(self, ratio):
@@ -83,15 +87,16 @@ class BatchCrop(nn.Module):
         if self.training:
             h, w = x.size()[-2:]
             rw = int(self.ratio * w)
-            start = random.randint(0, h-1)
+            start = random.randint(0, h - 1)
             if start + rw > h:
-                select = list(range(0, start+rw-h)) + list(range(start, h))
+                select = list(range(0, start + rw - h)) + list(range(start, h))
             else:
-                select = list(range(start, start+rw))
+                select = list(range(start, start + rw))
             mask = x.new_zeros(x.size())
             mask[:, :, select, :] = 1
             x = x * mask
         return x
+
 
 class ResNetBuilder(nn.Module):
     in_planes = 2048
@@ -139,6 +144,7 @@ class ResNetBuilder(nn.Module):
                 {'params': base_param_group}
             ]
 
+
 class BFE(nn.Module):
     def __init__(self, num_classes, width_ratio=0.5, height_ratio=0.5):
         super(BFE, self).__init__()
@@ -162,21 +168,21 @@ class BFE(nn.Module):
         )
         self.res_part.load_state_dict(resnet.layer4.state_dict())
         reduction = nn.Sequential(
-            nn.Conv2d(2048, 512, 1), 
-            nn.BatchNorm2d(512), 
+            nn.Conv2d(2048, 1024, 1),
+            nn.BatchNorm2d(1024),
             nn.ReLU()
         )
-         # global branch
+        # global branch
         self.global_avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.global_softmax = nn.Linear(512, num_classes) 
+        self.global_softmax = nn.Conv2d(1024, num_classes, 1)
         self.global_softmax.apply(weights_init_kaiming)
         self.global_reduction = copy.deepcopy(reduction)
         self.global_reduction.apply(weights_init_kaiming)
-
+        '''
         # part branch
         self.res_part2 = Bottleneck(2048, 512)
-     
-        self.part_maxpool = nn.AdaptiveMaxPool2d((1,1))
+
+        self.part_maxpool = nn.AdaptiveMaxPool2d((1, 1))
         self.batch_crop = BatchDrop(height_ratio, width_ratio)
         self.reduction = nn.Sequential(
             nn.Linear(2048, 1024, 1),
@@ -186,19 +192,9 @@ class BFE(nn.Module):
         self.reduction.apply(weights_init_kaiming)
         self.softmax = nn.Linear(1024, num_classes)
         self.softmax.apply(weights_init_kaiming)
-        
-        
-        self.channel_drop = nn.Dropout2d(0.5)
-        self.reductionc = nn.Sequential(
-            nn.Linear(2048, 512, 1),
-            nn.BatchNorm1d(512),
-            nn.ReLU()
-        )
-        self.reductionc.apply(weights_init_kaiming)
-        self.softmaxc = nn.Linear(512, num_classes)
-        self.softmaxc.apply(weights_init_kaiming)
+        '''
 
-    def forward(self, x):
+    def forward(self, x, y=None):
         """
         :param x: input image tensor of (N, C, H, W)
         :return: (prediction, triplet_losses, softmax_losses)
@@ -210,43 +206,32 @@ class BFE(nn.Module):
         triplet_features = []
         softmax_features = []
 
-        #global branch
-        glob = self.global_avgpool(x)
-        global_triplet_feature = self.global_reduction(glob).squeeze()
+        # global branch
+
+        global_triplet_feature = self.global_reduction(x)
         global_softmax_class = self.global_softmax(global_triplet_feature)
+        global_softmax_class = self.global_avgpool(global_softmax_class).squeeze()
+        global_triplet_feature = self.global_avgpool(global_triplet_feature).squeeze()
         softmax_features.append(global_softmax_class)
         triplet_features.append(global_triplet_feature)
-        predict.append(global_triplet_feature)
-       
-        #part branch
-        x_raw = self.res_part2(x)
+        # predict.append(global_triplet_feature)
 
-        x = self.batch_crop(x_raw)
+        '''
+        # part branch
+        x = self.res_part2(x)
+
+        x = self.batch_crop(x)
         triplet_feature = self.part_maxpool(x).squeeze()
         feature = self.reduction(triplet_feature)
         softmax_feature = self.softmax(feature)
         triplet_features.append(feature)
         softmax_features.append(softmax_feature)
         predict.append(feature)
-        
-        # if self.training:
-        #     x = self.channel_drop(x_raw)
-        # x = self.channel_drop(x_raw)
-        if self.training:
-            x = self.channel_drop(x_raw)
-        else:
-            x *= 0.5
-        triplet_feature = self.global_avgpool(x).squeeze()
-        feature = self.reductionc(triplet_feature)
-        softmax_feature = self.softmaxc(feature)
-        triplet_features.append(feature)
-        softmax_features.append(softmax_feature)
-        predict.append(feature)
-
+        '''
         if self.training:
             return triplet_features, softmax_features
         else:
-            return torch.cat(predict, 1)
+            return global_triplet_feature
 
     def get_optim_policy(self):
         params = [
@@ -254,13 +239,12 @@ class BFE(nn.Module):
             {'params': self.res_part.parameters()},
             {'params': self.global_reduction.parameters()},
             {'params': self.global_softmax.parameters()},
-            {'params': self.res_part2.parameters()},
-            {'params': self.reduction.parameters()},
-            {'params': self.softmax.parameters()},
-            {'params': self.reductionc.parameters()},
-            {'params': self.softmaxc.parameters()},
+            # {'params': self.res_part2.parameters()},
+            # {'params': self.reduction.parameters()},
+            # {'params': self.softmax.parameters()},
         ]
         return params
+
 
 class Resnet(nn.Module):
     def __init__(self, num_classes, resnet=None):
@@ -296,6 +280,7 @@ class Resnet(nn.Module):
 
     def get_optim_policy(self):
         return self.parameters()
+
 
 class IDE(nn.Module):
     def __init__(self, num_classes, resnet=None):

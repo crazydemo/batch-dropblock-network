@@ -369,6 +369,8 @@ class BFE(nn.Module):
         # part11 branch
         if self.training:
             x_part11 = self.channel_drop11(x_part11)
+        else:
+            x_part11 *= 0.3
         cp1_triplet_feature = self.part_maxpool(x_part11).squeeze()  # N*2048
         cp1_feature = self.reduction11(cp1_triplet_feature)  # N*1024
         cp1_softmax_feature = self.softmax11(cp1_feature)  # N*num_class/751
@@ -389,6 +391,8 @@ class BFE(nn.Module):
         # part21 branch
         if self.training:
             x_part21 = self.channel_drop21(x_part21)
+        else:
+            x_part21 *= 0.5
         cp2_triplet_feature = self.part_maxpool(x_part21).squeeze()  # N*2048
         cp2_feature = self.reduction11(cp2_triplet_feature)  # N*1024
         cp2_softmax_feature = self.softmax11(cp2_feature)  # N*num_class/751

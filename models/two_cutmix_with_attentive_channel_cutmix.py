@@ -424,6 +424,7 @@ class BFE(nn.Module):
         :param x: input image tensor of (N, C, H, W)
         :return: (prediction, triplet_losses, softmax_losses)
         """
+        print('here')
         x = self.backbone(x)
         x = self.res_part(x)
 
@@ -481,12 +482,12 @@ class BFE(nn.Module):
             gradcamchannel, _ = gradCAMChannel(x_part11, cp1_softmax_feature, y)
             x_part21 = self.channel_drop21(x_part21, gradcamchannel, y)
         cp2_triplet_feature = self.part_maxpool(x_part21).squeeze()  # N*2048
-        cp2_feature = self.reduction11(cp2_triplet_feature)  # N*1024
-        cp2_softmax_feature = self.softmax11(cp2_feature)  # N*num_class/751
+        cp2_feature = self.reduction21(cp2_triplet_feature)  # N*1024
+        cp2_softmax_feature = self.softmax21(cp2_feature)  # N*num_class/751
         
-        triplet_features.append(cutmix1_feature+cp2_feature)
-        softmax_features.append(cutmix1_softmax_feature+cp2_softmax_feature)
-        predict.append(cutmix1_feature+cp2_feature)
+        triplet_features.append(cutmix2_feature+cp2_feature)
+        softmax_features.append(cutmix2_softmax_feature+cp2_softmax_feature)
+        predict.append(cutmix2_feature+cp2_feature)
 
         if self.training:
             return triplet_features, softmax_features
