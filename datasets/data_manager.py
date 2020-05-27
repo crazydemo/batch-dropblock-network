@@ -104,7 +104,7 @@ class CUHK_LABELED(object):
     # identities: 1501 (+1 for background)
     # images: 12936 (train) + 3368 (query) + 15913 (gallery)
     """
-    def __init__(self, dataset_dir, mode, root='/media/ivy/research/datasets'):
+    def __init__(self, dataset_dir, mode, root='/media/ivy/research/datasets/cuhk03-np'):
         self.dataset_dir = dataset_dir
         self.dataset_dir = osp.join(root, self.dataset_dir)
         self.train_dir = osp.join(self.dataset_dir, 'bounding_box_train')
@@ -119,7 +119,7 @@ class CUHK_LABELED(object):
         num_total_pids = num_train_pids + num_query_pids
         num_total_imgs = num_train_imgs + num_query_imgs + num_gallery_imgs
 
-        print("=> Market1501 loaded")
+        print("=> CUHK03-labeled loaded")
         print("Dataset statistics:")
         print("  ------------------------------")
         print("  subset   | # ids | # images")
@@ -182,4 +182,4 @@ def init_dataset(name, mode):
     if name=='market1501':
         return Market1501(name, mode)
     elif name=='cuhk-labeled':
-        return CUHK_LABELED(name, mode)
+        return CUHK_LABELED('labeled', mode)

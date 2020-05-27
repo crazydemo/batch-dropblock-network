@@ -7,14 +7,14 @@ class DefaultConfig(object):
     seed = 0
 
     # dataset options
-    dataset = 'market1501'
+    dataset = 'cuhk-labeled'
     datatype = 'person'
     mode = 'retrieval'
     # optimization options
     loss = 'triplet'
     optim = 'adam'
     max_epoch = 400
-    train_batch = 4
+    train_batch = 8
     test_batch = 4
     adjust_lr = True
     lr = 0.0001
@@ -41,7 +41,7 @@ class DefaultConfig(object):
     
     # miscs
     print_freq = 30
-    eval_step = 50
+    eval_step = 1
     save_dir = './experiment_res/prior_posterior_simultaneously/bfe_prior_posterior/cuhk03_labeled'
     workers = 10
     start_epoch = 0
