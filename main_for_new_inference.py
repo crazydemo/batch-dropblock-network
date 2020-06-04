@@ -15,7 +15,7 @@ from config import opt
 from datasets import data_manager
 from datasets.data_loader import ImageData
 from datasets.samplers import RandomIdentitySampler
-from models.two_cutmix_shared_forward_version import ResNetBuilder, IDE, Resnet, BFE
+from models.two_cutmix_shared_new_inference import ResNetBuilder, IDE, Resnet, BFE
 
 # G_branch, G_branch_triplet_KL_xent
 
@@ -25,7 +25,7 @@ from models.two_cutmix_shared_forward_version import ResNetBuilder, IDE, Resnet,
 
 from trainers.evaluator import ResNetEvaluator
 from trainers.trainer import cls_tripletTrainer, cls_tripletTrainer_for_prior_posterior, \
-    cls_tripletTrainer_for_prior_posterior_multibranch
+    cls_tripletTrainer_for_prior_posterior_multibranch, cls_tripletTrainer_test
 from utils.loss import CrossEntropyLabelSmooth, TripletLoss, Margin, LikelihoodLoss
 from utils.LiftedStructure import LiftedStructureLoss
 from utils.DistWeightDevianceLoss import DistWeightBinDevianceLoss
@@ -143,8 +143,7 @@ def train(**kwargs):
         return loss
 
     def criterion_for_position(predicted_mask, label_mask):
-        # loss = bce_criterion(predicted_mask, label_mask)
-        loss = nn.functional.kl_div(label_mask.log(), predicted_mask, reduction='sum')
+        loss = bce_criterion(predicted_mask, label_mask)
         return loss
 
     def criterion_for_position_reg(triplet_y, softmax_y, labels, predicted_mask, label_mask):
@@ -152,7 +151,6 @@ def train(**kwargs):
                  [xent_criterion(output, labels) for output in softmax_y]
         loss = sum(losses)
         loss += bce_criterion(predicted_mask, label_mask)
-        # loss += nn.functional.kl_div(label_mask.log(), predicted_mask, reduction='sum')
         return loss
 
     def criterion_for_prior_posterior(cls_score, posterior_mu, posterior_sigma, prior_mu, prior_sigma, labels):
@@ -182,99 +180,16 @@ def train(**kwargs):
 
     # get optimizer
     if opt.optim == "sgd":
-        optimizer = torch.optim.SGD(optim_policy, lr=opt.lr, momentum=0.9, weight_decay=opt.weight_decay)
+        optimizer = torch.optim.SGD(optim_policy, lr=0., momentum=0.9, weight_decay=opt.weight_decay)
     else:
-        optimizer = torch.optim.Adam(optim_policy, lr=opt.lr, weight_decay=opt.weight_decay)
+        optimizer = torch.optim.Adam(optim_policy, lr=0., weight_decay=opt.weight_decay)
 
     start_epoch = opt.start_epoch
     # get trainer and evaluator
-    if opt.block_choice == 'position':
-        reid_trainer = cls_tripletTrainer(opt, model, optimizer, criterion_for_position, summary_writer)
-    elif opt.block_choice == 'position_reg':
-        reid_trainer = cls_tripletTrainer(opt, model, optimizer, criterion_for_position_reg, summary_writer)
-    elif opt.block_choice == 'prior_posterior':
-        reid_trainer = cls_tripletTrainer_for_prior_posterior(opt, model, optimizer, criterion_for_prior_posterior,
-                                                              summary_writer)
-    elif opt.block_choice == 'bfe_prior_posterior':
-        reid_trainer = cls_tripletTrainer_for_prior_posterior_multibranch(opt, model, optimizer,
-                                                                          criterion_for_prior_posterior_multibranch,
-                                                                          summary_writer)
-    else:
-        reid_trainer = cls_tripletTrainer(opt, model, optimizer, criterion, summary_writer)
+    reid_trainer = cls_tripletTrainer_test(opt, model, optimizer, criterion, summary_writer)
+    rank1 = reid_trainer.train(queryloader, galleryloader)
+    print('Best rank-1 {:.1%}'.format(rank1))
 
-    '''
-        def adjust_lr(optimizer, ep):
-            if ep < 50:
-                lr = 1e-4*(ep//5+1)
-            elif ep < 200:
-                lr = 1e-3
-            elif ep < 300:
-                lr = 1e-4
-            else:
-                lr = 1e-5
-            for p in optimizer.param_groups:
-                p['lr'] = lr
-        '''
-
-    def adjust_lr(optimizer, ep):
-        if ep < 50:
-            lr = 1e-4 * (ep // 5 + 1)
-        elif ep < 200:
-            lr = 1e-3
-        elif ep < 300:
-            lr = 1e-4
-        elif ep < 500:
-            lr = 1e-5
-        else:
-            lr = 1e-6 / 2  # 5e-6
-        for p in optimizer.param_groups:
-            p['lr'] = lr
-            if 'prior_sigma' in p:
-                p['weight_decay'] = 0.
-                p['lr'] = lr * 0.01
-
-    def adjust_lr_finetune(optimizer, ep):
-        if ep < 200:
-            lr = 1e-4
-        elif ep < 300:
-            lr = 1e-5
-        elif ep < 500:
-            lr = 1e-6
-        else:
-            lr = 1e-6 / 2  # 5e-6
-        for p in optimizer.param_groups:
-            p['lr'] = lr
-
-    # start training
-    best_rank1 = opt.best_rank
-    best_epoch = 0
-    for epoch in range(start_epoch, opt.max_epoch):
-        if opt.adjust_lr:
-            # print('adjusting learning rate...')
-            adjust_lr(optimizer, epoch + 1)
-            # adjust_lr_finetune(optimizer, epoch + 1)
-        reid_trainer.train(epoch, trainloader)
-
-        # skip if not save model
-        if opt.eval_step > 0 and (epoch + 1) % opt.eval_step == 0 or (epoch + 1) == opt.max_epoch:
-            if opt.mode == 'class':
-                rank1 = test(model, queryloader)
-            else:
-                rank1 = reid_evaluator.evaluate(queryloader, galleryloader, queryFliploader, galleryFliploader)
-            is_best = rank1 > best_rank1
-            if is_best:
-                best_rank1 = rank1
-                best_epoch = epoch + 1
-
-            if use_gpu:
-                state_dict = model.module.state_dict()
-            else:
-                state_dict = model.state_dict()
-            save_checkpoint({'state_dict': state_dict, 'epoch': epoch + 1},
-                            is_best=is_best, save_dir=opt.save_dir,
-                            filename='checkpoint_ep' + str(epoch + 1) + '.pth.tar')
-
-    print('Best rank-1 {:.1%}, achived at epoch {}'.format(best_rank1, best_epoch))
 
 
 def test(model, queryloader):

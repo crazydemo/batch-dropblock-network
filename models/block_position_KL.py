@@ -14,9 +14,12 @@ from torch.utils.data import dataloader
 from torchvision import transforms
 from torchvision.models.resnet import Bottleneck, resnet50
 from torchvision.transforms import functional
+import cv2
+import os
 
 from .resnet import ResNet
 
+img_path = '/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline_gap_first/block_position_spatial_logits_for_draw/market/imgs/epoch200/'
 
 def weights_init_kaiming(m):
     classname = m.__class__.__name__
@@ -172,12 +175,34 @@ class BFE(nn.Module):
             nn.BatchNorm2d(1024),
             nn.ReLU()
         )
-        # global branch
+        # block id
         self.global_avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.global_softmax = nn.Conv2d(1024, num_classes, 1)
         self.global_softmax.apply(weights_init_kaiming)
         self.global_reduction = copy.deepcopy(reduction)
         self.global_reduction.apply(weights_init_kaiming)
+
+        #block position
+        self.upsample = nn.Upsample(scale_factor=4, mode='bilinear')
+        self.blk_position = nn.Sequential(
+            nn.Conv2d(2048, 1024, 5, 2, 2),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(),
+
+            nn.Conv2d(1024, 512, 3, 2, 1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+
+            nn.Conv2d(512, 256, 1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+
+            nn.Conv2d(256, 1, 1),
+        )
+        self.blk_position.apply(weights_init_kaiming)
+        self.sigmoid = nn.Sigmoid()
+        self.softmax = nn.Softmax(-1)
+
         '''
         # part branch
         self.res_part2 = Bottleneck(2048, 512)
@@ -199,6 +224,7 @@ class BFE(nn.Module):
         :param x: input image tensor of (N, C, H, W)
         :return: (prediction, triplet_losses, softmax_losses)
         """
+        img = x
         x = self.backbone(x)
         x = self.res_part(x)
 
@@ -206,28 +232,70 @@ class BFE(nn.Module):
         triplet_features = []
         softmax_features = []
 
-        # global branch
-        glob_x = self.global_avgpool(x)
-        global_triplet_feature = self.global_reduction(glob_x)
+        #block positions
+        x_upsampled = self.upsample(x)
+        predicted_mask = self.blk_position(x_upsampled)
+        bs, c, h, w = predicted_mask.size()
+        predicted_mask_ = predicted_mask.view(bs, c, h * w)
+        predicted_mask_ = self.softmax(predicted_mask_)
+
+        #block id label mask
+        x_detached = x.detach()
+        label_mask = self.global_reduction(x_detached)
+        label_mask = self.global_softmax(label_mask)
+        bs, c, h, w = label_mask.size()
+        label_mask = label_mask.view(bs, c, h*w)
+        label_mask = self.softmax(label_mask)
+        label_mask = label_mask.detach()
+
+        if self.training:
+            label_lst = []
+            for i in range(x.size()[0]):
+                score = label_mask[i, y[i], :]
+                label_lst.append(score.float())
+                '''save img'''
+
+                if not os.path.exists(img_path):
+                    os.makedirs(img_path)
+                predicted_mask = predicted_mask_.view(bs, 1, h, w)
+                label_saved = score.view(h, w)
+                img_raw = img[i, :, :, :].detach().cpu().numpy()
+                img_raw = img_raw.transpose(1,2,0)
+                img_raw = img_raw - np.min(img_raw)
+                img_raw = img_raw / np.max(img_raw)
+                img_raw = np.uint8(255 * img_raw)
+                img_raw = cv2.cvtColor(img_raw, cv2.COLOR_BGR2RGB)
+                label_saved = label_saved.cpu().numpy()
+                label_saved = label_saved - np.min(label_saved)
+                label_saved = label_saved / np.max(label_saved)
+                label_saved = np.uint8(255 * label_saved)
+                predicted_saved = predicted_mask[i,0,:,:].detach().cpu().numpy()
+                predicted_saved = predicted_saved - np.min(predicted_saved)
+                predicted_saved = predicted_saved / np.max(predicted_saved)
+                predicted_saved = np.uint8(255 * predicted_saved)
+                label_saved = np.expand_dims(label_saved, -1)
+                predicted_saved = np.expand_dims(predicted_saved, -1)
+                label_saved = cv2.resize(label_saved, (128,384))
+                predicted_saved = cv2.resize(predicted_saved, (128, 384))
+                cv2.imwrite(img_path + 'img' + str(i) + '.jpg', img_raw)
+                cv2.imwrite(img_path + 'label'+str(i)+'.jpg', label_saved)
+                cv2.imwrite(img_path + 'predicted'+str(i)+'.jpg', predicted_saved)
+                print('saving done!')
+
+                ''''''
+            label_mask = torch.stack(label_lst, 0)
+            predicted_mask_ = predicted_mask_.view(x.size()[0], -1)
+            label_mask_ =label_mask.view(x.size()[0], -1)
+
+        x = torch.sum(x * predicted_mask, dim=[2,3], keepdim=True)
+        global_triplet_feature = self.global_reduction(x)
         global_softmax_class = self.global_softmax(global_triplet_feature)
         softmax_features.append(global_softmax_class.squeeze())
         triplet_features.append(global_triplet_feature.squeeze())
-        # predict.append(global_triplet_feature)
+        predict.append(global_triplet_feature.squeeze())
 
-        '''
-        # part branch
-        x = self.res_part2(x)
-
-        x = self.batch_crop(x)
-        triplet_feature = self.part_maxpool(x).squeeze()
-        feature = self.reduction(triplet_feature)
-        softmax_feature = self.softmax(feature)
-        triplet_features.append(feature)
-        softmax_features.append(softmax_feature)
-        predict.append(feature)
-        '''
         if self.training:
-            return triplet_features, softmax_features
+            return triplet_features, softmax_features, predicted_mask_, label_mask_
         else:
             return global_triplet_feature.squeeze()
 
@@ -240,6 +308,7 @@ class BFE(nn.Module):
             # {'params': self.res_part2.parameters()},
             # {'params': self.reduction.parameters()},
             # {'params': self.softmax.parameters()},
+            {'params': self.blk_position.parameters()},
         ]
         return params
 

@@ -7,15 +7,15 @@ class DefaultConfig(object):
     seed = 0
 
     # dataset options
-    dataset = 'cuhk-labeled'
+    dataset = 'market1501'
     datatype = 'person'
     mode = 'retrieval'
     # optimization options
     loss = 'triplet'
     optim = 'adam'
     max_epoch = 400
-    train_batch = 8
-    test_batch = 4
+    train_batch = 48
+    test_batch = 32
     adjust_lr = True
     lr = 0.0001
     gamma = 0.1
@@ -30,19 +30,24 @@ class DefaultConfig(object):
     re_ranking = False
 
     # model options
-    block_choice = 'bfe_prior_posterior'#'position_reg' #'position', 'position_reg', prior_posterior, bfe_prior_posterior
+    block_choice = None #'position_reg' #'bfe_prior_posterior'#'position_reg' #'position', 'position_reg', prior_posterior, bfe_prior_posterior
     model_name = 'bfe'  # triplet, softmax_triplet, bfe, ide
     last_stride = 1
-    pretrained_model = None#'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_position_spatial_logits/market/checkpoint_ep200.pth.tar'
+    pretrained_model = None
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_id_gap_first/market/checkpoint_ep400.pth.tar'
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline_gap_first/block_position_spatial_logits/market/checkpoint_ep200.pth.tar'
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_id_gap_first/market/checkpoint_ep400.pth.tar'
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/two_cutmix_shared/market/checkpoint_ep400.pth.tar'
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_position_spatial_logits/market/checkpoint_ep200.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_position_spatial_logits/market/checkpoint_ep20.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_id/market/checkpoint_ep400.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_position/market/checkpoint_ep1.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/two_cutmix_attentive_channel_cutmix/market/checkpoint_ep600.pth.tar'
     
     # miscs
-    print_freq = 30
-    eval_step = 1
-    save_dir = './experiment_res/prior_posterior_simultaneously/bfe_prior_posterior/cuhk03_labeled'
+    print_freq = 1
+    eval_step = 50
+    save_dir = './experiment_res/two_cutmix_shared/two_cutmix_shared_forward_version.py/market'
     workers = 10
     start_epoch = 0
     best_rank = -np.inf
