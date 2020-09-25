@@ -3,6 +3,7 @@ import random
 import torch
 from torch import nn
 import torch.nn.functional as F
+import math
 
 def topk_mask(input, dim, K = 10, **kwargs):
     index = input.topk(max(1, min(K, input.size(dim))), dim = dim, **kwargs)[1]
@@ -42,7 +43,50 @@ def euclidean_dist(x, y):
     dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
     return dist
 
+def dist_after_cross_attention(x, p_idx, n_idx):
+    """
+    Args:
+      x: pytorch Variable, with shape [m, d]
+      y: pytorch Variable, with shape [n, d]
+    Returns:
+      dist: pytorch Variable, with shape [m, n]
+    """
+    dist_ap = []
+    dist_an = []
+    for i in range(len(p_idx)):
+        a = normalize(x[i, :, :, :], axis=0)
+        p = normalize(x[p_idx[i], :, :, :], axis=0)
+        n = normalize(x[n_idx[i], :, :, :], axis=0)
+        # a, p, n = x[i, :, :, :], x[p_idx[i], :, :, :], x[n_idx[i], :, :, :]
+        a_ = cross_attention(a, a)
+        p_ = cross_attention(a, p)
+        dist_ap.append(torch.sum((a_ - p_) ** 2).clamp(min=1e-12).sqrt())
+        n_ = cross_attention(a, n)
+        dist_an.append(torch.sum((a_ - n_) ** 2).clamp(min=1e-12).sqrt())
+    return dist_ap, dist_an
 
+def cross_attention(anchor, output):
+    c, h, w = anchor.size()
+    anchor = anchor.view(c, h*w)
+    output = output.view(c, h*w)
+    anchor = anchor.t()
+    attention = anchor.mm(output)
+    attention = F.softmax(attention, 0)
+    output_ = output.mm(attention)
+    output1 = torch.mean(output_, -1)
+    output2 = torch.mean(output, -1)
+    diff = torch.sum(output2-output1)
+    output = output1+output2
+    '''
+    anchor = anchor.t()
+    anchor_ = anchor.mm(attention)
+    anchor1 = torch.mean(anchor_, -1)
+    anchor2 = torch.mean(anchor, -1)
+    diff = torch.sum(anchor2 - anchor1)
+    anchor = anchor1 + anchor2
+    return anchor, output
+    '''
+    return output
 def hard_example_mining(dist_mat, labels, margin, return_inds=False):
     """For each anchor, find the hardest positive and negative sample.
     Args:
@@ -122,6 +166,64 @@ class TripletLoss(object):
             loss = self.ranking_loss(dist_an - dist_ap, y)
         return loss, dist_ap, dist_an
 
+class TripletLoss_pp(object):
+    """Modified from Tong Xiao's open-reid (https://github.com/Cysu/open-reid).
+    Related Triplet Loss theory can be found in paper 'In Defense of the Triplet
+    Loss for Person Re-Identification'."""
+
+
+    def __init__(self, margin=None):
+        self.margin = margin
+        if margin is not None:
+            self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+        else:
+            self.ranking_loss = nn.SoftMarginLoss()
+
+    def __call__(self, global_feat, labels, normalize_feature=False):
+        if normalize_feature:
+            global_feat1 = normalize(global_feat[:, :512], axis=-1)
+            global_feat2 = normalize(global_feat[:, 512:], axis=-1)
+        else:
+            global_feat1 = global_feat[:, :512]
+            global_feat2 = global_feat[:, 512:]
+        dist_mat1 = euclidean_dist(global_feat1, global_feat1)
+        dist_mat2 = euclidean_dist(global_feat2, global_feat2)
+        dist_mat = dist_mat1 + dist_mat2
+        dist_ap, dist_an = hard_example_mining(dist_mat, labels, self.margin)
+        y = dist_an.new().resize_as_(dist_an).fill_(1)
+        if self.margin is not None:
+            loss = self.ranking_loss(dist_an, dist_ap, y)
+        else:
+            loss = self.ranking_loss(dist_an - dist_ap, y)
+        return loss, dist_ap, dist_an
+
+class TripletLoss_cross_attention(object):
+    """Modified from Tong Xiao's open-reid (https://github.com/Cysu/open-reid).
+    Related Triplet Loss theory can be found in paper 'In Defense of the Triplet
+    Loss for Person Re-Identification'."""
+
+    def __init__(self, margin=None):
+        self.margin = margin
+        if margin is not None:
+            self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+        else:
+            self.ranking_loss = nn.SoftMarginLoss()
+
+    def __call__(self, global_feat, score_tensor, labels, normalize_feature=False):
+        if normalize_feature:
+            global_feat = normalize(global_feat, axis=-1)
+        dist_mat = euclidean_dist(global_feat, global_feat)
+        _, dist_an, p_inds, n_inds = hard_example_mining(dist_mat, labels, self.margin, True)
+        y = dist_an.new().resize_as_(dist_an).fill_(1)
+        dist_ap, _ = dist_after_cross_attention(score_tensor, p_inds, n_inds)
+        dist_ap = torch.tensor(dist_ap).cuda()
+        dist_an = torch.tensor(dist_an).cuda()
+        if self.margin is not None:
+            loss = self.ranking_loss(dist_an, dist_ap, y)
+        else:
+            loss = self.ranking_loss(dist_an - dist_ap, y)
+        return loss, dist_ap, dist_an
+
 
 class CrossEntropyLabelSmooth(nn.Module):
     """Cross entropy loss with label smoothing regularizer.
@@ -163,7 +265,7 @@ class LikelihoodLoss(nn.Module):
         epsilon (float): weight.
     """
 
-    def __init__(self, num_classes, a=0.0001, lamda=0.001, use_gpu=True):
+    def __init__(self, num_classes, a=0.001, lamda=0.001, use_gpu=True):#a=0.001 for lgm
         super(LikelihoodLoss, self).__init__()
         self.num_classes = num_classes
         self.a = a
@@ -171,7 +273,7 @@ class LikelihoodLoss(nn.Module):
         self.lamda = lamda
         self.logsoftmax = nn.LogSoftmax(dim=1)
 
-    def forward(self, score, label):
+    def forward(self, score, label, ):
         """
         Args:
             inputs: prediction matrix (before softmax) with shape (batch_size, num_classes)
@@ -181,7 +283,7 @@ class LikelihoodLoss(nn.Module):
         max_num = torch.max(ALPHA)
         K = ALPHA * self.a + 1
         logits_with_margin = score * K.cuda()
-        likelihood = self.lamda * torch.mean(torch.sum(-1. * logits_with_margin * ALPHA.cuda(), 1))
+        likelihood = self.lamda * torch.mean(torch.sum(-1. * score * ALPHA.cuda(), 1))
 
         return likelihood, logits_with_margin
 

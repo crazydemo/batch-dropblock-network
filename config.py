@@ -14,7 +14,7 @@ class DefaultConfig(object):
     loss = 'triplet'
     optim = 'adam'
     max_epoch = 400
-    train_batch = 48
+    train_batch = 32
     test_batch = 32
     adjust_lr = True
     lr = 0.0001
@@ -30,10 +30,13 @@ class DefaultConfig(object):
     re_ranking = False
 
     # model options
-    block_choice = None #'position_reg' #'bfe_prior_posterior'#'position_reg' #'position', 'position_reg', prior_posterior, bfe_prior_posterior
+    block_choice = 'gumble'#'gumble' #'position_reg' #'bfe_prior_posterior'#'position_reg' #'position', 'position_reg', prior_posterior, bfe_prior_posterior
     model_name = 'bfe'  # triplet, softmax_triplet, bfe, ide
     last_stride = 1
     pretrained_model = None
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/one_cutmix_cross_attention/market/checkpoint_ep400.pth.tar'
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/one_cutmix_forward/market/checkpoint_ep50.pth.tar'
+#'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline_gap_first/block_id_gap_first/market/checkpoint_ep400.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_id_gap_first/market/checkpoint_ep400.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline_gap_first/block_position_spatial_logits/market/checkpoint_ep200.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline/block_id_gap_first/market/checkpoint_ep400.pth.tar'
@@ -45,9 +48,9 @@ class DefaultConfig(object):
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/two_cutmix_attentive_channel_cutmix/market/checkpoint_ep600.pth.tar'
     
     # miscs
-    print_freq = 1
+    print_freq = 30
     eval_step = 50
-    save_dir = './experiment_res/two_cutmix_shared/two_cutmix_shared_forward_version.py/market'
+    save_dir = './experiment_res/gumble_softmax/softmax_on_spatial_fix_block_as_small_rectangle_upper_branch_no_pmaskmarket1501'
     workers = 10
     start_epoch = 0
     best_rank = -np.inf

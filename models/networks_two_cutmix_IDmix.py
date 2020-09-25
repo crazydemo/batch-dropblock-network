@@ -439,13 +439,13 @@ class BFE(nn.Module):
                 img = feature_img[i, 0, :, :] - np.min(feature_img[i, 0, :, :])
                 # img = x_img[i] - np.min(x_img[i])
                 img = img / np.max(img)
-                # img = np.uint8(255 * img).transpose(1, 2, 0)
-                # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = np.uint8(255 * img).transpose(1, 2, 0)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 img = cv2.resize(img, (camW, camH))
-                # result = heatmap * 0.5 + img * 0.5
+                result = heatmap * 0.5 + img * 0.5
                 cv2.imwrite('cam-img/feature-img/two_cutmix1/Heat{}.jpg'.format(i), heatmap)
                 cv2.imwrite('cam-img/feature-img/two_cutmix1/feature{}.jpg'.format(i), img)
-                # cv2.imwrite('feature-img/two_cutmix_best/cutmix1/Heatimg{}.jpg'.format(i), result)
+                cv2.imwrite('feature-img/two_cutmix_best/cutmix1/Heatimg{}.jpg'.format(i), result)
             print('ok')
 
             # cutmix branch2

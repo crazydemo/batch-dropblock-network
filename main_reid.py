@@ -3,6 +3,7 @@ import os
 import sys
 from os import path as osp
 from pprint import pprint
+import math
 
 import numpy as np
 import torch
@@ -10,12 +11,13 @@ from tensorboardX import SummaryWriter
 from torch import nn
 from torch.backends import cudnn
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
 from config import opt
 from datasets import data_manager
 from datasets.data_loader import ImageData
 from datasets.samplers import RandomIdentitySampler
-from models.two_cutmix_shared_forward_version import ResNetBuilder, IDE, Resnet, BFE
+from models.gumble_softmax import ResNetBuilder, IDE, Resnet, BFE
 
 # G_branch, G_branch_triplet_KL_xent
 
@@ -24,9 +26,10 @@ from models.two_cutmix_shared_forward_version import ResNetBuilder, IDE, Resnet,
 # two_cutmix_shared, block_id, block_position, block_position_spatial_logits
 
 from trainers.evaluator import ResNetEvaluator
+from trainers.evaluater_pp import ResNetEvaluator as ResNetEvaluator_pp
 from trainers.trainer import cls_tripletTrainer, cls_tripletTrainer_for_prior_posterior, \
-    cls_tripletTrainer_for_prior_posterior_multibranch
-from utils.loss import CrossEntropyLabelSmooth, TripletLoss, Margin, LikelihoodLoss
+    cls_tripletTrainer_for_prior_posterior_multibranch, cls_tripletTrainer_gumble, cls_tripletTrainer_for_lgm
+from utils.loss import CrossEntropyLabelSmooth, TripletLoss, Margin, LikelihoodLoss, TripletLoss_cross_attention, TripletLoss_pp
 from utils.LiftedStructure import LiftedStructureLoss
 from utils.DistWeightDevianceLoss import DistWeightBinDevianceLoss
 from utils.serialization import Logger, save_checkpoint
@@ -117,7 +120,10 @@ def train(**kwargs):
 
     if use_gpu:
         model = nn.DataParallel(model).cuda()
-    reid_evaluator = ResNetEvaluator(model)
+    if opt.block_choice == 'prior_posterior':
+        reid_evaluator = ResNetEvaluator_pp(model)
+    else:
+        reid_evaluator = ResNetEvaluator(model)
 
     if opt.evaluate:
         reid_evaluator.evaluate(queryloader, galleryloader,
@@ -128,9 +134,13 @@ def train(**kwargs):
     xent_criterion = CrossEntropyLabelSmooth(dataset.num_train_pids)
     bce_criterion = nn.BCELoss()
     lkd_criterion = LikelihoodLoss(dataset.num_train_pids)
+    cross_attention_triplet = TripletLoss_cross_attention(opt.margin)
 
     if opt.loss == 'triplet':
-        embedding_criterion = TripletLoss(opt.margin)
+        if opt.block_choice=='prior_posterior':
+            embedding_criterion = TripletLoss_pp(opt.margin)
+        else:
+            embedding_criterion = TripletLoss(opt.margin)
     elif opt.loss == 'lifted':
         embedding_criterion = LiftedStructureLoss(hard_mining=True)
     elif opt.loss == 'weight':
@@ -138,6 +148,12 @@ def train(**kwargs):
 
     def criterion(triplet_y, softmax_y, labels):
         losses = [embedding_criterion(output, labels)[0] for output in triplet_y] + \
+                 [xent_criterion(output, labels) for output in softmax_y]
+        loss = sum(losses)
+        return loss
+
+    def criterion_for_cross_attention(triplet_y, softmax_y, score_tensors, labels):
+        losses = [cross_attention_triplet(triplet_y[i], score_tensors[i], labels)[0] for i in range(len(triplet_y))] + \
                  [xent_criterion(output, labels) for output in softmax_y]
         loss = sum(losses)
         return loss
@@ -151,16 +167,29 @@ def train(**kwargs):
         losses = [embedding_criterion(output, labels)[0] for output in triplet_y] + \
                  [xent_criterion(output, labels) for output in softmax_y]
         loss = sum(losses)
-        loss += bce_criterion(predicted_mask, label_mask)
+        loss += xent_criterion(predicted_mask, label_mask)
         # loss += nn.functional.kl_div(label_mask.log(), predicted_mask, reduction='sum')
         return loss
 
     def criterion_for_prior_posterior(cls_score, posterior_mu, posterior_sigma, prior_mu, prior_sigma, labels):
         lkd_loss, logits_with_margin = lkd_criterion(cls_score, labels)
         xent_loss = xent_criterion(logits_with_margin, labels)
+        triplet_loss = embedding_criterion(torch.cat([posterior_mu, posterior_sigma], -1), labels)[0]
+
+        sigma_avg = torch.tensor(5.0)
+        thres = torch.log(sigma_avg)
+        thres += (1.0 + torch.log(2 * torch.tensor(math.pi))) / 2.0
+        ent = torch.mean(F.relu(thres - torch.mean(torch.log(posterior_sigma), -1)))
+
+        loss = lkd_loss + xent_loss + triplet_loss + 0.1 * ent
+        return loss, lkd_loss, xent_loss, triplet_loss, posterior_mu, posterior_sigma, prior_mu, prior_sigma
+
+    def criterion_for_lgm(cls_score, posterior_mu, prior_mu, prior_sigma, labels):
+        lkd_loss, logits_with_margin = lkd_criterion(cls_score, labels)
+        xent_loss = xent_criterion(logits_with_margin, labels)
         triplet_loss = embedding_criterion(posterior_mu, labels)[0]
         loss = lkd_loss + xent_loss + triplet_loss
-        return loss, lkd_loss, xent_loss, triplet_loss, posterior_mu, posterior_sigma, prior_mu, prior_sigma
+        return loss, lkd_loss, xent_loss, triplet_loss, posterior_mu, prior_mu, prior_sigma
 
     def criterion_for_prior_posterior_multibranch(cls_score, posterior_mu, posterior_sigma, prior_mu, prior_sigma,
                                                   labels):
@@ -185,6 +214,7 @@ def train(**kwargs):
         optimizer = torch.optim.SGD(optim_policy, lr=opt.lr, momentum=0.9, weight_decay=opt.weight_decay)
     else:
         optimizer = torch.optim.Adam(optim_policy, lr=opt.lr, weight_decay=opt.weight_decay)
+        # optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, optim_policy), lr=opt.lr, weight_decay=opt.weight_decay)
 
     start_epoch = opt.start_epoch
     # get trainer and evaluator
@@ -195,26 +225,33 @@ def train(**kwargs):
     elif opt.block_choice == 'prior_posterior':
         reid_trainer = cls_tripletTrainer_for_prior_posterior(opt, model, optimizer, criterion_for_prior_posterior,
                                                               summary_writer)
+    elif opt.block_choice == 'lgm':
+        reid_trainer = cls_tripletTrainer_for_lgm(opt, model, optimizer, criterion_for_lgm,
+                                                              summary_writer)
     elif opt.block_choice == 'bfe_prior_posterior':
         reid_trainer = cls_tripletTrainer_for_prior_posterior_multibranch(opt, model, optimizer,
                                                                           criterion_for_prior_posterior_multibranch,
                                                                           summary_writer)
+    elif opt.block_choice == 'cross_attention':
+        reid_trainer = cls_tripletTrainer(opt, model, optimizer, criterion_for_cross_attention, summary_writer)
+    elif opt.block_choice == 'gumble':
+        reid_trainer = cls_tripletTrainer_gumble(opt, model, optimizer, criterion, summary_writer)
     else:
         reid_trainer = cls_tripletTrainer(opt, model, optimizer, criterion, summary_writer)
 
-    '''
-        def adjust_lr(optimizer, ep):
-            if ep < 50:
-                lr = 1e-4*(ep//5+1)
-            elif ep < 200:
-                lr = 1e-3
-            elif ep < 300:
-                lr = 1e-4
-            else:
-                lr = 1e-5
-            for p in optimizer.param_groups:
-                p['lr'] = lr
-        '''
+
+    # def adjust_lr(optimizer, ep):
+    #     if ep < 50:
+    #         lr = 1e-4*(ep//5+1)
+    #     elif ep < 200:
+    #         lr = 1e-3
+    #     elif ep < 300:
+    #         lr = 1e-4
+    #     else:
+    #         lr = 1e-5
+    #     for p in optimizer.param_groups:
+    #         p['lr'] = lr
+
 
     def adjust_lr(optimizer, ep):
         if ep < 50:
@@ -225,12 +262,11 @@ def train(**kwargs):
             lr = 1e-4
         elif ep < 500:
             lr = 1e-5
-        else:
-            lr = 1e-6 / 2  # 5e-6
+        # else:
+        #     lr = 1e-6 / 2  # 5e-6
         for p in optimizer.param_groups:
             p['lr'] = lr
-            if 'prior_sigma' in p:
-                p['weight_decay'] = 0.
+            if p['weight_decay'] == 0.:
                 p['lr'] = lr * 0.01
 
     def adjust_lr_finetune(optimizer, ep):
