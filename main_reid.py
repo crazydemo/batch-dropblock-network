@@ -17,7 +17,7 @@ from config import opt
 from datasets import data_manager
 from datasets.data_loader import ImageData
 from datasets.samplers import RandomIdentitySampler
-from models.gumble_softmax import ResNetBuilder, IDE, Resnet, BFE
+from models.icassp_grad_cam_guided_softmask_two_branch import ResNetBuilder, IDE, Resnet, BFE
 
 # G_branch, G_branch_triplet_KL_xent
 
@@ -264,10 +264,10 @@ def train(**kwargs):
             lr = 1e-5
         # else:
         #     lr = 1e-6 / 2  # 5e-6
-        for p in optimizer.param_groups:
-            p['lr'] = lr
-            if p['weight_decay'] == 0.:
-                p['lr'] = lr * 0.01
+        # for p in optimizer.param_groups:
+        #     p['lr'] = lr
+        #     if p['weight_decay'] == 0.:
+        #         p['lr'] = lr * 0.01
 
     def adjust_lr_finetune(optimizer, ep):
         if ep < 200:

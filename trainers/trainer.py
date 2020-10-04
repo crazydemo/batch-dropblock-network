@@ -10,6 +10,7 @@ from utils.loss import euclidean_dist, hard_example_mining
 from utils.meters import AverageMeter
 # from tensorboardX import SummaryWriter
 import torchvision.utils as vutils
+import cv2
 
 class cls_tripletTrainer_gumble:
     def __init__(self, opt, model, optimzier, criterion, summary_writer):
@@ -62,14 +63,24 @@ class cls_tripletTrainer_gumble:
               'Lr {:.2e}'
               .format(epoch, batch_time.sum, losses.mean, param_group[0]['lr']))
         print()
-        x = self.pmask.detach().cpu().numpy()
-        x = np.round(x*255)[0]
-        self.summary_writer.add_image('pmask', x[0], epoch)
+        x = self.pmask.detach().cpu().numpy()[0][0]
+        x = x - np.min(x)
+        x = x / np.max(x)
+        x = np.uint8(x*255)
+        x = np.expand_dims(x, -1)
+        x = cv2.applyColorMap(x, cv2.COLORMAP_JET)
+        x = x.transpose((2, 0, 1))
+        self.summary_writer.add_image('pmask', np.uint8(x), epoch)
         # self.summary_writer.add_image('Mask1', x[1], epoch)
 
-        x_ = self.nmask.detach().cpu().numpy()
-        x_ = np.round(x_ * 255)[0]
-        self.summary_writer.add_image('nmask', x_[0], epoch)
+        x_ = self.nmask.detach().cpu().numpy()[0][0]
+        x_ = x_ - np.min(x_)
+        x_ = x_ / np.max(x_)
+        x_ = np.uint8(x_ * 255)
+        x_ = np.expand_dims(x_, -1)
+        x_ = cv2.applyColorMap(x_, cv2.COLORMAP_JET)
+        x_ = x_.transpose((2, 0, 1))
+        self.summary_writer.add_image('nmask', np.uint8(x_), epoch)
 
     def _parse_data(self, inputs):
         imgs, pids, _ = inputs

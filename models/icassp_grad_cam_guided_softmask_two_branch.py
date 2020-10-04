@@ -196,6 +196,60 @@ class GumbelSigmoid(nn.Module):
         return x.view(bs, c, h, w)
 
 
+class GetGrad():
+    def __init__(self):
+        pass
+
+    def get_grad(self, grad):
+        self.grad = grad
+
+    def __call__(self, x):
+        x.register_hook(self.get_grad)
+
+
+def gradCAM(gradfeature, scores, idxs):
+    getGrad = GetGrad()
+    getGrad(gradfeature)
+    feature = gradfeature.detach()
+    bs, c, h, w = feature.size()
+    output_gradCam = []
+    if torch.cuda.is_available():
+        score = torch.tensor(0, dtype=torch.float).cuda()
+    else:
+        score = torch.tensor(0, dtype=torch.float)
+    for i in range(bs):
+        score += scores[i, idxs[i]]
+    # score = (scores.sum()).sum()
+    score.backward(retain_graph=True)
+    grad = getGrad.grad.detach()
+    # print('grad')
+    # print(grad.size())
+    # print(grad[0,0,:,:])
+    weight = grad.mean(2)
+    weight = weight.mean(2)
+    cam_cv = []
+    for i in range(bs):
+        grad_cam = weight[i].reshape(1, c).mm(feature[i].reshape((c, h * w)))
+        grad_cam = grad_cam.reshape(h, w)
+        grad_cam = F.relu(grad_cam)
+        output_gradCam.append(grad_cam)
+
+        # cam_img = grad_cam.cpu().detach().numpy()
+        # cam_img = cam_img - np.min(cam_img)
+        # cam_img = cam_img / np.max(cam_img)
+        # cam_img = np.uint8(255 * cam_img)
+        cam_img = grad_cam.detach()
+        # b, c, h, w = cam_img.size()
+        # cam_img = cam_img.view([b, c, -1])
+        cam_img = cam_img - torch.min(cam_img)
+        cam_img = cam_img / torch.max(cam_img)
+        # cam_img = cam_img.view([b, c, h, w])
+        cam_cv.append(cam_img)
+    cam_cv = torch.stack(cam_cv, 0)
+    output_gradCam = torch.stack(output_gradCam, dim=0)
+    return output_gradCam, cam_cv
+
+
 class BFE(nn.Module):
     def __init__(self, num_classes, width_ratio=0.5, height_ratio=0.5):
         super(BFE, self).__init__()
@@ -233,7 +287,7 @@ class BFE(nn.Module):
         self.global_reduction.apply(weights_init_kaiming)
 
         # mask branch
-        self.masknet = MaskNet(2048)
+        # self.masknet = MaskNet(2048)
 
         # part branch
         self.res_part2 = Bottleneck(2048, 512)
@@ -262,9 +316,6 @@ class BFE(nn.Module):
         triplet_features = []
         softmax_features = []
 
-        # mask branch
-        p_mask = self.masknet(x, epoch)
-        n_mask = 1-p_mask
 
         # global branch
         # x1 = self.res_part1(x)
@@ -275,9 +326,19 @@ class BFE(nn.Module):
         triplet_features.append(global_triplet_feature)
         predict.append(global_triplet_feature)
 
+        # mask branch
+        if self.training:
+            p_mask, _ = gradCAM(x, global_softmax_class, y)
+            p_mask = p_mask.unsqueeze(1).detach()
+            n_mask = 1 - p_mask
+            n_mask = n_mask.detach()
+
         #part branch
         x2 = self.res_part2(x)
-        glob2 = self.part_maxpool(x2*n_mask)
+        if self.training:
+            x2 = x2*n_mask
+
+        glob2 = self.part_maxpool(x2)
         global_triplet_feature = self.reduction(glob2).squeeze()
         global_softmax_class = self.softmax(global_triplet_feature)
         softmax_features.append(global_softmax_class)
@@ -299,7 +360,7 @@ class BFE(nn.Module):
             {'params': self.res_part2.parameters()},
             {'params': self.reduction.parameters()},
             {'params': self.softmax.parameters()},
-            {'params': self.masknet.parameters()},
+            # {'params': self.masknet.parameters()},
         ]
         return params
 

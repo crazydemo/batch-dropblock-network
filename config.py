@@ -34,6 +34,7 @@ class DefaultConfig(object):
     model_name = 'bfe'  # triplet, softmax_triplet, bfe, ide
     last_stride = 1
     pretrained_model = None
+    #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/gumble_softmax/softmax_on_spatial_fix_block_all_width_upper_branch_no_pmask/market1501/checkpoint_ep150.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/one_cutmix_cross_attention/market/checkpoint_ep400.pth.tar'
     #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/one_cutmix_forward/market/checkpoint_ep50.pth.tar'
 #'/media/ivy/research/BDB_raw/batch-dropblock-network/experiment_res/spatial_based_baseline_gap_first/block_id_gap_first/market/checkpoint_ep400.pth.tar'
@@ -50,7 +51,7 @@ class DefaultConfig(object):
     # miscs
     print_freq = 30
     eval_step = 50
-    save_dir = './experiment_res/gumble_softmax/softmax_on_spatial_fix_block_as_small_rectangle_upper_branch_no_pmaskmarket1501'
+    save_dir = './experiments_icassp/grad_cam_guided_softmask/two_branch/market1501'
     workers = 10
     start_epoch = 0
     best_rank = -np.inf
